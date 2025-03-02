@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Nonogram Solver</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100vh;
+        font-family: sans-serif;
+        box-sizing: border-box;
+      }
+      /* Use CSS Grid with a gap and overall padding */
+      body {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+        grid-gap: 10px;
+        padding: 10px;
+      }
+      /* Each quadrant is a flex container in column direction */
+      #top-left,
+      #top-right,
+      #bottom-left,
+      #bottom-right {
+        border: 1px solid #000;
+        padding: 10px;
+        box-sizing: border-box;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+      }
+      /* Headings styling with some margin and bottom padding */
+      #top-left h3,
+      #top-right h3,
+      #bottom-left h3,
+      #bottom-right h3 {
+        margin: 0;
+        padding-bottom: 5px;
+      }
+      /* Textareas expand to fill their container */
+      textarea {
+        flex: 1;
+        width: 100%;
+        box-sizing: border-box;
+        resize: none;
+      }
+      /* The nonogram display area fills available space */
+      #nonogramDisplay {
+        flex: 1;
+        width: 100%;
+        background-color: #f9f9f9;
+        white-space: pre;
+        font-family: monospace;
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Top Left quadrant: Info and Control -->
+    <div id="top-left">
+      <h3>Info &amp; Control</h3>
+      <div id="info">General info will appear here.</div>
+      <br />
+      <button id="startBtn">Start</button>
+    </div>
+    <!-- Top Right quadrant: Column Clues -->
+    <div id="top-right">
+      <h3>Column Clues</h3>
+      <textarea
+        id="colCluesText"
+        placeholder="Enter clues for each column, one per line"
+      ></textarea>
+    </div>
+    <!-- Bottom Left quadrant: Row Clues -->
+    <div id="bottom-left">
+      <h3>Row Clues</h3>
+      <textarea
+        id="rowCluesText"
+        placeholder="Enter clues for each row, one per line"
+      ></textarea>
+    </div>
+    <!-- Bottom Right quadrant: Nonogram Display -->
+    <div id="bottom-right">
+      <h3>Nonogram</h3>
+      <div id="nonogramDisplay"></div>
+    </div>
+
+    <script>
+      /**
+       * Parses clues from the provided text input.
+       *
+       * Each line should contain numbers separated by spaces or commas.
+       *
+       * @param {string} text - The raw clue text.
+       * @returns {(number[][]|null)} An array of number arrays if successful; otherwise, null.
+       */
+      function parseClues(text) {
+        const lines = text
+          .trim()
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+        const clues = [];
+        for (const line of lines) {
+          const tokens = line.split(/[\s,]+/);
+          const numbers = tokens
+            .map((token) => parseInt(token, 10))
+            .filter((n) => !isNaN(n));
+          if (numbers.length === 0) {
+            return null;
+          }
+          clues.push(numbers);
+        }
+        return clues;
+      }
+
+      /**
+       * Creates an empty grid state.
+       *
+       * The grid is a 2D array with the given dimensions, where:
+       *   0 represents an Undecided cell.
+       *
+       * @param {number} height - The number of rows.
+       * @param {number} width - The number of columns.
+       * @returns {number[][]} The initial grid state.
+       */
+      function createEmptyState(height, width) {
+        const state = [];
+        for (let i = 0; i < height; i++) {
+          const row = [];
+          for (let j = 0; j < width; j++) {
+            row.push(0);
+          }
+          state.push(row);
+        }
+        return state;
+      }
+
+      /**
+       * Returns a deep copy of the grid state.
+       *
+       * @param {number[][]} state - The current grid state.
+       * @returns {number[][]} A deep copy of the grid.
+       */
+      function copyState(state) {
+        return state.map((row) => row.slice());
+      }
+
+      /**
+       * Recursively enumerates all valid completions for a single row given its clues,
+       * subject to the current row constraints.
+       *
+       * @param {number[]} row - An array representing the current row status 
+       *   (0 for Undecided, 1 for Filled, -1 for Empty).
+       * @param {number[]} clues - An array of numbers representing the run lengths.
+       * @returns {number[][]} An array of candidate completions of the row.
+       */
+      function enumerateRowOptions(row, clues) {
+        const results = [];
+        const n = row.length;
+
+        /**
+         * Recursive helper that builds candidate completions.
+         *
+         * @param {number} clueIndex - The index of the clue we are placing.
+         * @param {number} pos - Current position in the row.
+         * @param {number[]} candidate - The candidate row being built.
+         */
+        function recurse(clueIndex, pos, candidate) {
+          if (clueIndex === clues.length) {
+            // Fill the remainder with Empty (-1)
+            for (let i = pos; i < n; i++) {
+              if (row[i] === 1) return;
+              candidate[i] = -1;
+            }
+            results.push(candidate.slice());
+            return;
+          }
+
+          const block = clues[clueIndex];
+          // The number of remaining blocks (each requiring at least one gap)
+          const remainingBlocks = clues.length - clueIndex - 1;
+          for (let start = pos; start <= n - block - remainingBlocks; start++) {
+            let valid = true;
+            const newCandidate = candidate.slice();
+            // Fill cells before the block with Empty (-1)
+            for (let i = pos; i < start; i++) {
+              if (row[i] === 1) {
+                valid = false;
+                break;
+              }
+              newCandidate[i] = -1;
+            }
+            if (!valid) continue;
+            // Place the block: set cells to Filled (1)
+            for (let i = start; i < start + block; i++) {
+              if (i >= n || row[i] === -1) {
+                valid = false;
+                break;
+              }
+              newCandidate[i] = 1;
+            }
+            if (!valid) continue;
+            let nextPos = start + block;
+            // For all but the last block, a gap is mandatory.
+            if (clueIndex < clues.length - 1) {
+              if (nextPos >= n || row[nextPos] === 1) continue;
+              newCandidate[nextPos] = -1;
+              nextPos++;
+            }
+            recurse(clueIndex + 1, nextPos, newCandidate);
+          }
+        }
+        recurse(0, 0, new Array(n));
+        return results;
+      }
+
+      /**
+       * Computes the logically determined state for a single row.
+       * It examines all candidate completions of the row and determines, for each cell,
+       * whether it is consistently Filled or consistently Empty.
+       *
+       * @param {number[]} row - The current row state (0: Undecided, 1: Filled, -1: Empty).
+       * @param {number[]} rowClue - The clue for the row (array of run lengths).
+       * @returns {number[]} The deduced row state, updated with cells that are always Filled (1)
+       *   or always Empty (-1); otherwise, the original cell value is preserved.
+       */
+      function logicSingle(row, rowClue) {
+        const n = row.length;
+        const alwaysFilled = new Array(n).fill(true);
+        const alwaysEmpty = new Array(n).fill(true);
+        const candidates = enumerateRowOptions(row, rowClue);
+
+        // If no candidate exists, return the original row (this may indicate an inconsistency).
+        if (candidates.length === 0) {
+          return row.slice();
+        }
+
+        // Check each candidate.
+        for (const candidate of candidates) {
+          for (let i = 0; i < n; i++) {
+            if (candidate[i] !== 1) {
+              alwaysFilled[i] = false;
+            }
+            if (candidate[i] !== -1) {
+              alwaysEmpty[i] = false;
+            }
+          }
+        }
+
+        // Build the deduced row, marking cells that are consistently filled or empty.
+        const result = [];
+        for (let i = 0; i < n; i++) {
+          if (alwaysFilled[i]) {
+            result[i] = 1;
+          } else if (alwaysEmpty[i]) {
+            result[i] = -1;
+          } else {
+            result[i] = row[i];
+          }
+        }
+        return result;
+      }
+
+      /**
+       * Applies logical deductions to all rows and columns repeatedly until
+       * no further change occurs.
+       *
+       * The iteration counts are taken from the lengths of the clue arrays,
+       * ensuring that we work with the proper dimensions.
+       *
+       * @param {number[][]} state - The current grid state.
+       * @param {number[][]} rowClues - Array of row clues.
+       * @param {number[][]} colClues - Array of column clues.
+       * @returns {number[][]} The updated grid state after applying deductions.
+       */
+      function logic(state, rowClues, colClues) {
+        let newState = copyState(state);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          // Process all rows.
+          for (let i = 0; i < rowClues.length; i++) {
+            const updatedRow = logicSingle(newState[i], rowClues[i]);
+            for (let j = 0; j < colClues.length; j++) {
+              if (newState[i][j] !== updatedRow[j]) {
+                newState[i][j] = updatedRow[j];
+                changed = true;
+              }
+            }
+          }
+          // Process all columns.
+          for (let j = 0; j < colClues.length; j++) {
+            const col = [];
+            for (let i = 0; i < rowClues.length; i++) {
+              col.push(newState[i][j]);
+            }
+            const updatedCol = logicSingle(col, colClues[j]);
+            for (let i = 0; i < rowClues.length; i++) {
+              if (newState[i][j] !== updatedCol[i]) {
+                newState[i][j] = updatedCol[i];
+                changed = true;
+              }
+            }
+          }
+        }
+        return newState;
+      }
+
+      /**
+       * Validates a single line (row or column) given its clues.
+       *
+       * It enumerates candidate completions for the line based on the current state.
+       * If at least one valid candidate exists, the line is considered valid.
+       *
+       * @param {number[]} line - The current line state.
+       * @param {number[]} clues - The clues for the line.
+       * @returns {boolean} True if the line has at least one completion, false otherwise.
+       */
+      function validateLine(line, clues) {
+        const candidates = enumerateRowOptions(line, clues);
+        return candidates.length > 0;
+      }
+
+      /**
+       * Validates the entire grid state given the row and column clues.
+       *
+       * Each row and column must have at least one candidate completion.
+       *
+       * @param {number[][]} state - The current grid state.
+       * @param {number[][]} rowClues - Array of row clues.
+       * @param {number[][]} colClues - Array of column clues.
+       * @returns {boolean} True if every row and column is valid; false otherwise.
+       */
+      function validate(state, rowClues, colClues) {
+        for (let i = 0; i < rowClues.length; i++) {
+          if (!validateLine(state[i], rowClues[i])) {
+            return false;
+          }
+        }
+        for (let j = 0; j < colClues.length; j++) {
+          const col = [];
+          for (let i = 0; i < rowClues.length; i++) {
+            col.push(state[i][j]);
+          }
+          if (!validateLine(col, colClues[j])) {
+            return false;
+          }
+        }
+        return true;
+      }
+
+      /**
+       * Finds the first cell that is Undecided (0) in the grid.
+       *
+       * @param {number[][]} state - The current grid state.
+       * @returns {(number[]|null)} An array containing the row and column indices
+       *   of the first undecided cell, or null if all cells are decided.
+       */
+      function find(state, rowClues, colClues) {
+        for (let i = 0; i < state.length; i++) {
+          for (let j = 0; j < state[i].length; j++) {
+            if (state[i][j] === 0) return [i, j];
+          }
+        }
+        return null;
+      }
+
+      /**
+       * Recursively solves the nonogram puzzle.
+       *
+       * This function first applies logical deductions to update the state,
+       * then validates the grid. If the grid is fully decided, it returns the solved state.
+       * Otherwise, it selects the first Undecided cell and recursively tries setting it
+       * to Filled (1) and then Empty (-1). If neither possibility yields a solution, it returns false.
+       *
+       * @param {number[][]} state - The current grid state.
+       * @param {number[][]} rowClues - Array of row clues.
+       * @param {number[][]} colClues - Array of column clues.
+       * @returns {(number[][]|boolean)} The solved state if successful, or false if unsolvable.
+       */
+      function solve(state, rowClues, colClues) {
+        const updatedState = logic(state, rowClues, colClues);
+        if (!validate(updatedState, rowClues, colClues)) {
+          return false;
+        }
+        const pos = find(updatedState, rowClues, colClues);
+        if (pos === null) {
+          // Puzzle solved.
+          return updatedState;
+        }
+        const [row, col] = pos;
+        let newState = copyState(updatedState);
+        newState[row][col] = 1;
+        let solvedState = solve(newState, rowClues, colClues);
+        if (solvedState !== false) {
+          return solvedState;
+        }
+        newState = copyState(updatedState);
+        newState[row][col] = -1;
+        solvedState = solve(newState, rowClues, colClues);
+        return solvedState;
+      }
+
+      /**
+       * Displays the grid state in the nonogram display area.
+       *
+       * Cells are rendered as follows:
+       *   1 → "■" (Filled)
+       *  -1 → "□" (Empty)
+       *   0 → "?" (Undecided)
+       *
+       * @param {number[][]} state - The grid state to display.
+       */
+      function displayState(state) {
+        const displayDiv = document.getElementById("nonogramDisplay");
+        let content = "";
+        for (let i = 0; i < state.length; i++) {
+          for (let j = 0; j < state[i].length; j++) {
+            if (state[i][j] === 1) {
+              content += "■ ";
+            } else if (state[i][j] === -1) {
+              content += "□ ";
+            } else {
+              content += "? ";
+            }
+          }
+          content += "\n";
+        }
+        displayDiv.textContent = content;
+      }
+
+      // Attach event listener to the Start button.
+      document.getElementById("startBtn").addEventListener("click", () => {
+        const infoDiv = document.getElementById("info");
+        const rowCluesText = document.getElementById("rowCluesText").value;
+        const colCluesText = document.getElementById("colCluesText").value;
+
+        const parsedRows = parseClues(rowCluesText);
+        const parsedCols = parseClues(colCluesText);
+
+        if (!parsedRows || !parsedCols) {
+          infoDiv.textContent =
+            "Parsing failed: Please ensure each line has valid numbers.";
+          return;
+        }
+
+        // Dimensions are set based on the number of clue lines.
+        const height = parsedRows.length;
+        const width = parsedCols.length;
+        infoDiv.textContent = `Parsed successfully: Nonogram size ${width} x ${height}. Solving...`;
+
+        const emptyState = createEmptyState(height, width);
+        const solution = solve(emptyState, parsedRows, parsedCols);
+        if (solution !== false) {
+          infoDiv.textContent += " Solution found.";
+          displayState(solution);
+        } else {
+          infoDiv.textContent += " No solution exists.";
+        }
+      });
+    </script>
+  </body>
+</html>
