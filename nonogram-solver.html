@@ -50,7 +50,7 @@
         white-space: pre;
         font-family: monospace;
         box-sizing: border-box;
-        line-height: 1.2; /* Adjust for better spacing */
+        line-height: 1.2;
       }
       .control-row {
         display: flex;
@@ -68,7 +68,7 @@
         padding: 5px;
         margin-top: 10px;
         border: 1px solid #ddd;
-        min-height: 50px; /* Ensure log is visible */
+        min-height: 50px;
       }
       button {
         margin: 2px 0;
@@ -118,18 +118,164 @@
 
     <script>
       /**
+       * Enumerate all possible fillings for a line given clues and current state.
+       * Early pruning: returns immediately if clues are impossible for the line length.
+       * Handles pre-filled cells correctly.
+       * @param {Int8Array|Array<number>} lineView - Current line state (0=undecided, 1=filled, -1=empty)
+       * @param {number[]} clues - Clues for the line
+       * @returns {Array<Int8Array>} - Array of valid fillings (each is Int8Array)
+       */
+      function enumerateLineFillings(lineView, clues) {
+        const n = lineView.length;
+        const m = clues.length;
+        const results = [];
+      
+        // Early pruning: impossible if clues can't fit
+        let minRequired = clues.reduce((a, b) => a + b, 0);
+        if (m > 0 && !(m === 1 && clues[0] === 0)) minRequired += m - 1;
+        if (minRequired > n) return results;
+      
+        /**
+         * Recursively try all valid placements of clues.
+         * @param {number} pos - Current position in the line
+         * @param {number} clueIdx - Current clue index
+         * @param {Int8Array} filling - Current filling state
+         */
+        function recurse(pos, clueIdx, filling) {
+          if (clueIdx === m) {
+            // After last clue, rest must be empty or compatible with lineView
+            for (let i = pos; i < n; ++i) {
+              if (lineView[i] === 1) return; // Contradiction: must be empty but filled
+              filling[i] = -1;
+            }
+            results.push(Int8Array.from(filling));
+            return;
+          }
+          // Try placing the next block at every valid position
+          for (let skip = 0; pos + skip + clues[clueIdx] <= n; ++skip) {
+            // Check that skipped cells are not filled
+            let ok = true;
+            for (let i = pos; i < pos + skip; ++i) {
+              if (lineView[i] === 1) {
+                ok = false;
+                break;
+              }
+            }
+            if (!ok) continue; // Try next skip value
+      
+            // Place the block
+            for (let i = pos; i < pos + skip; ++i) filling[i] = -1;
+            // Block cells
+            for (let i = pos + skip; i < pos + skip + clues[clueIdx]; ++i) {
+              if (lineView[i] === -1) {
+                ok = false;
+                break;
+              }
+              filling[i] = 1;
+            }
+            if (!ok) {
+              // Undo block cells
+              for (let i = pos + skip; i < pos + skip + clues[clueIdx]; ++i)
+                filling[i] = 0;
+              for (let i = pos; i < pos + skip; ++i) filling[i] = 0;
+              continue;
+            }
+            // After block, must have at least one empty (unless at end)
+            const nextPos = pos + skip + clues[clueIdx];
+            if (nextPos < n) {
+              if (lineView[nextPos] === 1) {
+                // Undo block cells
+                for (let i = pos + skip; i < pos + skip + clues[clueIdx]; ++i)
+                  filling[i] = 0;
+                for (let i = pos; i < pos + skip; ++i) filling[i] = 0;
+                continue;
+              }
+              filling[nextPos] = -1;
+              recurse(nextPos + 1, clueIdx + 1, filling);
+              filling[nextPos] = 0;
+            } else {
+              recurse(nextPos, clueIdx + 1, filling);
+            }
+            // Undo block cells
+            for (let i = pos + skip; i < pos + skip + clues[clueIdx]; ++i)
+              filling[i] = 0;
+            for (let i = pos; i < pos + skip; ++i) filling[i] = 0;
+          }
+        }
+      
+        // Special case: clue [0] means all empty
+        if (m === 1 && clues[0] === 0) {
+          let ok = true;
+          for (let i = 0; i < n; ++i) if (lineView[i] === 1) ok = false;
+          if (ok) {
+            const arr = new Int8Array(n);
+            arr.fill(-1);
+            results.push(arr);
+          }
+          return results;
+        }
+      
+        recurse(0, 0, new Int8Array(n));
+        return results;
+      }
+
+      /**
+       * Deduce forced cells in a line by brute-force enumeration.
+       * @param {Int8Array} lineView
+       * @param {number[]} clues
+       * @returns {Int8Array|null} - Deduced line or null if inconsistent
+       */
+      function deduceLineBrute(lineView, clues) {
+        const fillings = enumerateLineFillings(lineView, clues);
+        if (fillings.length === 0) return null; // Contradiction
+
+        const n = lineView.length;
+        const result = new Int8Array(n);
+        result.fill(0);
+        for (let i = 0; i < n; ++i) {
+          let allFilled = true,
+            allEmpty = true;
+          for (const f of fillings) {
+            if (f[i] !== 1) allFilled = false;
+            if (f[i] !== -1) allEmpty = false;
+          }
+          if (allFilled) result[i] = 1;
+          else if (allEmpty) result[i] = -1;
+          else result[i] = lineView[i];
+        }
+        return result;
+      }
+
+      /**
+       * Validates that clues are possible for the given line length.
+       * @param {number[]} clues
+       * @param {number} lineLength
+       * @returns {boolean}
+       */
+      function cluesPossible(clues, lineLength) {
+        if (clues.length === 1 && clues[0] === 0) return true;
+        const minRequired =
+          clues.reduce((a, b) => a + b, 0) + (clues.length - 1);
+        return minRequired <= lineLength;
+      }
+
+      /**
        * Represents and solves a Nonogram puzzle.
        */
       class NonogramSolver {
+        /**
+         * @param {function(string):void} logFn
+         * @param {function(NonogramSolver):void} displayFn
+         */
         constructor(logFn, displayFn) {
           this.log = logFn;
           this.displayFn = displayFn;
-          this._gridState = null; // Flat Int8Array: 0=Undecided, 1=Filled, -1=Empty
+          this._gridState = null;
           this._rowClues = [];
           this._colClues = [];
           this._width = 0;
           this._height = 0;
-          this._cluesChanged = true; // Start assuming clues need parsing
+          this._cluesChanged = true;
           this._initialized = false;
         }
 
@@ -143,41 +289,34 @@
             .trim()
             .split("\n")
             .map((line) => line.trim());
-          // Allow empty lines only if the entire input is empty
           if (lines.length === 1 && lines[0] === "") return [];
           const clues = [];
           for (const line of lines) {
-            // Handle empty lines representing zero clues
             if (line === "") {
-              clues.push([0]); // Represent 0 clue explicitly
+              clues.push([0]);
               continue;
             }
             const tokens = line.split(/[\s,]+/);
             const numbers = tokens
               .map((token) => parseInt(token, 10))
-              .filter((n) => !isNaN(n) && n >= 0); // Allow 0 clue
-
-            // If a line has numbers, it must contain at least one non-negative number
+              .filter((n) => !isNaN(n) && n >= 0);
             if (tokens.length > 0 && numbers.length === 0) {
               this.log(`Parsing Error: Invalid numbers in line "${line}"`);
               return null;
             }
-            // If the line wasn't empty but resulted in no numbers (e.g. just spaces), treat as 0
             if (numbers.length === 0 && line.length > 0) {
               clues.push([0]);
             } else if (numbers.length === 1 && numbers[0] === 0) {
-              clues.push([0]); // Store explicit 0 clue
+              clues.push([0]);
             } else {
-              // Filter out zeros unless it's the only clue
               const filteredNumbers = numbers.filter((n) => n > 0);
               if (filteredNumbers.length === 0 && numbers.length > 0) {
-                clues.push([0]); // Only zeros were present
+                clues.push([0]);
               } else {
                 clues.push(filteredNumbers);
               }
             }
           }
-          // Filter out [0] clues if they are not the only clue
           return clues.map((clueLine) =>
             clueLine.length > 1 && clueLine.includes(0)
               ? clueLine.filter((c) => c > 0)
@@ -187,6 +326,7 @@
 
         /**
          * Initializes the puzzle state from clue text areas.
+         * Validates clues for possibility.
          * @param {string} rowCluesText
          * @param {string} colCluesText
          * @returns {boolean} True if initialization was successful.
@@ -209,14 +349,37 @@
             return false;
           }
 
+          // Validate clues for possibility
+          for (let i = 0; i < parsedRows.length; ++i) {
+            if (!cluesPossible(parsedRows[i], parsedCols.length)) {
+              this.log(
+                `Impossible clues for row ${i + 1}: clues cannot fit in length ${
+                  parsedCols.length
+                }`
+              );
+              this._initialized = false;
+              return false;
+            }
+          }
+          for (let i = 0; i < parsedCols.length; ++i) {
+            if (!cluesPossible(parsedCols[i], parsedRows.length)) {
+              this.log(
+                `Impossible clues for column ${
+                  i + 1
+                }: clues cannot fit in length ${parsedRows.length}`
+              );
+              this._initialized = false;
+              return false;
+            }
+          }
+
           this._rowClues = parsedRows;
           this._colClues = parsedCols;
           this._height = this._rowClues.length;
           this._width = this._colClues.length;
 
-          // Use Int8Array for memory efficiency
           this._gridState = new Int8Array(this._width * this._height);
-          this._gridState.fill(0); // 0 for Undecided
+          this._gridState.fill(0);
 
           this.log(`Initialized: ${this._width} x ${this._height} grid.`);
           this._cluesChanged = false;
@@ -224,7 +387,12 @@
           return true;
         }
 
-        /** Checks if the solver is ready (initialized). Re-initializes if clues changed. */
+        /**
+         * Checks if the solver is ready (initialized). Re-initializes if clues changed.
+         * @param {string} rowCluesText
+         * @param {string} colCluesText
+         * @returns {boolean}
+         */
         isReady(rowCluesText, colCluesText) {
           if (this._cluesChanged || !this._initialized) {
             if (!this.initialize(rowCluesText, colCluesText)) {
@@ -234,13 +402,20 @@
           return this._initialized;
         }
 
-        /** Mark clues as potentially changed. */
+        /**
+         * Mark clues as potentially changed.
+         */
         markCluesChanged() {
           this._cluesChanged = true;
-          this._initialized = false; // Force re-init on next operation
+          this._initialized = false;
         }
 
-        /** Get cell state. */
+        /**
+         * Get cell state.
+         * @param {number} r
+         * @param {number} c
+         * @returns {number}
+         */
         _getCell(r, c) {
           if (r < 0 || r >= this._height || c < 0 || c >= this._width) {
             throw new Error(`Cell out of bounds: (${r}, ${c})`);
@@ -248,7 +423,12 @@
           return this._gridState[r * this._width + c];
         }
 
-        /** Set cell state. */
+        /**
+         * Set cell state.
+         * @param {number} r
+         * @param {number} c
+         * @param {number} value
+         */
         _setCell(r, c, value) {
           if (r < 0 || r >= this._height || c < 0 || c >= this._width) {
             throw new Error(`Cell out of bounds: (${r}, ${c})`);
@@ -259,511 +439,149 @@
           this._gridState[r * this._width + c] = value;
         }
 
-        /** Get a copy of the current grid state. */
+        /**
+         * Get a copy of the current grid state.
+         * @returns {Int8Array}
+         */
         getStateSnapshot() {
           return new Int8Array(this._gridState);
         }
 
-        /** Restore grid state from a snapshot. */
+        /**
+         * Restore grid state from a snapshot.
+         * @param {Int8Array} snapshot
+         */
         restoreStateSnapshot(snapshot) {
-          if (
-            snapshot &&
-            snapshot.length === this._width * this._height
-          ) {
+          if (snapshot && snapshot.length === this._width * this._height) {
             this._gridState.set(snapshot);
           } else {
             this.log("Error: Invalid state snapshot provided.");
           }
         }
 
-        // --- Dynamic Programming Line Solver ---
-
         /**
-         * Calculates DP tables for min end positions (forward) and max start positions (backward).
-         * min_end[i][k]: Earliest end position (index) for clue k-1 using cells up to i-1. (Value is n+1 if impossible)
-         * max_start[i][k]: Latest start position (index) for clue k using cells i to n-1. (Value is -1 if impossible)
-         * @param {Int8Array} lineView - View of the current line state.
-         * @param {number[]} clues - Clues for the line.
-         * @param {number} lineLength - Length of the line.
-         * @returns {object|null} Object { min_end, max_start } or null if impossible.
+         * Applies logical deductions repeatedly using brute-force enumeration.
+         * @returns {boolean} True if any changes were made, false if inconsistent or no changes.
          */
-        _calcLeftRanges(lineView, clues, lineLength) {
-          // Handle the "no blocks" case separately for clarity
-          if (clues.length === 1 && clues[0] === 0) {
-            for (let i = 0; i < lineLength; i++) {
-              if (lineView[i] === 1) return null; // Contradiction: Filled cell in empty line
-            }
-            // Need dummy DP tables that signify success but no blocks
-            const n = lineLength;
-            const m = 0; // Effectively 0 clues
-             const min_end = Array(n + 1).fill(0).map(() => Array(m + 1).fill(n + 1));
-             const max_start = Array(n + 1).fill(0).map(() => Array(m + 1).fill(-1));
-             min_end[0][0] = -1; // Base case: 0 clues end before cell 0
-             for(let i=0; i<=n; i++) {
-                 if (lineView[i-1] !== 1) min_end[i][0] = min_end[i-1]?.[0] ?? -1; // Propagate empty possibility
-             }
-             max_start[n][m] = n; // Base case: 0 clues start after cell n-1
-             for(let i=n-1; i>=0; i--) {
-                 if (lineView[i] !== 1) max_start[i][0] = max_start[i+1]?.[0] ?? n; // Propagate empty possibility
-             }
-             if (min_end[n][0] === n + 1 || max_start[0][0] === -1) return null; // Check consistency even for empty
-            return { min_end, max_start };
-          }
-
-          const n = lineLength;
-          const m = clues.length;
-
-          // --- Forward Pass (min_end) ---
-          // min_end[i][k]: Earliest end position (index) for clue k-1 using cells up to i-1.
-          const min_end = Array(n + 1).fill(0).map(() => Array(m + 1).fill(n + 1));
-          min_end[0][0] = -1; // Base case: 0 clues end before cell 0
-
-          for (let i = 1; i <= n; i++) {
-            const cell = lineView[i - 1]; // Cell state at index i-1
-
-            // Option 1: Treat cell i-1 as empty (propagate previous states)
-            if (cell !== 1) { // If cell i-1 is not forced filled
-              for (let k = 0; k <= m; k++) {
-                min_end[i][k] = min_end[i - 1][k];
-              }
-            }
-
-            // Option 2: Try ending clue k-1 at position i-1
-            for (let k = 1; k <= m; k++) {
-              const len = clues[k - 1];
-              const start = i - len; // Potential start index of block k-1
-              if (start < 0) continue; // Block doesn't fit
-
-              // Check if block placement [start, i-1] is valid w.r.t lineView
-              let possible = true;
-              for (let p = start; p < i; p++) {
-                if (lineView[p] === -1) { // Cannot place block over forced empty
-                  possible = false;
-                  break;
-                }
-              }
-              if (!possible) continue;
-
-              // Check gap requirement: cell before block must not be filled
-              const prev_cell_idx = start - 1;
-              if (prev_cell_idx >= 0 && lineView[prev_cell_idx] === 1) {
-                continue; // Forced filled cell before block start
-              }
-
-              // Check if the state *before* this block (ending at prev_cell_idx) was possible for clue k-2
-              let prev_state_end = n + 1; // Sentinel for impossible previous state
-              if (prev_cell_idx < 0) { // Block starts at index 0
-                if (k === 1) { // If this is the first block (k=1, clue k-1=0)
-                  prev_state_end = -1; // Valid base case
-                }
-              } else {
-                // Need state for k-1 clues ending at or before index prev_cell_idx
-                prev_state_end = min_end[prev_cell_idx + 1][k - 1];
-              }
-
-              // If a valid path exists to place the previous block (k-2)
-              if (prev_state_end !== n + 1) {
-                // We found a valid way to end block k-1 at i-1.
-                // Update min_end[i][k] with the minimum end position found so far.
-                min_end[i][k] = Math.min(min_end[i][k], i - 1);
-              }
-            } // End loop k (clues)
-          } // End loop i (cells)
-
-          // Check if it's possible to place all clues
-          if (min_end[n][m] === n + 1) {
-            // It's impossible to fit all 'm' clues within 'n' cells given constraints
-            return null;
-          }
-
-          // --- Backward Pass (max_start) ---
-          // max_start[i][k]: Latest start position (index) for clue k using cells i to n-1.
-          const max_start = Array(n + 1).fill(0).map(() => Array(m + 1).fill(-1));
-          max_start[n][m] = n; // Base case: 0 clues (after clue m-1) start after cell n-1
-
-          for (let i = n - 1; i >= 0; i--) {
-            const cell = lineView[i]; // Cell state at index i
-
-            // Option 1: Treat cell i as empty (propagate next states)
-            if (cell !== 1) { // If cell i is not forced filled
-              for (let k = 0; k <= m; k++) {
-                max_start[i][k] = max_start[i + 1][k];
-              }
-            }
-
-            // Option 2: Try starting clue k at position i
-            for (let k = m - 1; k >= 0; k--) {
-              const len = clues[k];
-              const end = i + len; // Potential end index + 1 of block k
-              if (end > n) continue; // Block doesn't fit
-
-              // Check if block placement [i, end-1] is valid w.r.t lineView
-              let possible = true;
-              for (let p = i; p < end; p++) {
-                if (lineView[p] === -1) { // Cannot place block over forced empty
-                  possible = false;
-                  break;
-                }
-              }
-              if (!possible) continue;
-
-              // Check gap requirement: cell after block must not be filled
-              const next_cell_idx = end;
-              if (next_cell_idx < n && lineView[next_cell_idx] === 1) {
-                continue; // Forced filled cell after block end
-              }
-
-              // Check if the state *after* this block (starting at next_cell_idx) was possible for clue k+1
-              let next_state_start = -1; // Sentinel for impossible next state
-              if (next_cell_idx >= n) { // Block ends at n-1 or later (only possible if end == n)
-                if (k === m - 1) { // If this is the last block (clue m-1)
-                  next_state_start = n; // Valid base case
-                }
-              } else {
-                // Need state for k+1 clues starting at or after index next_cell_idx
-                 next_state_start = max_start[next_cell_idx + 1][k + 1]; // Corrected index
-              }
-
-              // If a valid path exists to place the next block (k+1)
-              if (next_state_start !== -1) {
-                // We found a valid way to start block k at i.
-                // Update max_start[i][k] with the maximum start position found so far.
-                max_start[i][k] = Math.max(max_start[i][k], i);
-              }
-            } // End loop k (clues)
-          } // End loop i (cells)
-
-          // Check if it's possible to place the first clue starting from cell 0
-          if (max_start[0][0] === -1) {
-             // It's impossible to start placing clue 0 from the beginning
-             return null;
-          }
-
-          return { min_end, max_start };
-        }
-
-
-        /**
-         * Deduces the state of a line using DP ranges.
-         * @param {Int8Array} lineView - View of the current line state.
-         * @param {number[]} clues - Clues for the line.
-         * @param {number} lineLength - Length of the line.
-         * @returns {Int8Array|null} Deduced line state or null if inconsistent.
-         */
-        _deduceLineDP(lineView, clues, lineLength) {
-            const resultLine = new Int8Array(lineView); // Start with current state
-            let changed = false; // Track if any changes are made
-
-            // Handle "0" clue case explicitly
-            if (clues.length === 1 && clues[0] === 0) {
-                for (let i = 0; i < lineLength; i++) {
-                    if (lineView[i] === 1) return null; // Contradiction
-                    if (lineView[i] === 0) {
-                        resultLine[i] = -1;
-                        changed = true;
-                    }
-                }
-                // Return a new array only if changes were made
-                return changed ? resultLine : lineView;
-            }
-            // Handle case where parseClues might return [] for valid empty input
-            if (clues.length === 0) {
-                 // This case should ideally be handled by parseClues returning [0]
-                 this.log("Warning: Empty clue array encountered in _deduceLineDP");
-                 return this._deduceLineDP(lineView, [0], lineLength);
-            }
-
-            // Calculate DP ranges
-            const ranges = this._calcLeftRanges(lineView, clues, lineLength);
-            if (!ranges) return null; // Inconsistent line detected by DP
-
-            const { min_end, max_start } = ranges;
-            const n = lineLength;
-            const m = clues.length;
-
-            // Perform deductions for each cell
-            for (let i = 0; i < n; i++) {
-                const currentCellStateInView = lineView[i]; // Check against original view for contradictions
-
-                // Skip if already decided (unless checking for contradiction)
-                // Let's deduce anyway and check contradictions later
-
-                // --- Deduce Filled/Empty ---
-                let is_forced_filled = false;
-                let can_be_covered = false; // Can *any* valid block placement cover cell i?
-
-                for (let k = 0; k < m; k++) { // Loop through clues
-                    const len = clues[k];
-                    if (len === 0) continue; // Skip zero-length clues if they somehow appear
-
-                    // 1. Check if cell 'i' MUST be covered by block 'k' (Forced Fill)
-                    // Extract latest start (s_max_k) and earliest end (e_min_k) for block k
-                    // These represent the absolute bounds considering all constraints.
-                    let s_max_k = -1; // Latest possible start index for block k
-                    let e_min_k = n;  // Earliest possible end index for block k
-
-                    // Find s_max_k: Iterate all possible start positions 's'
-                    for (let s = 0; s <= n - len; s++) {
-                        const e = s + len - 1; // Corresponding end position
-                        // Check if starting at 's' is possible (max_start[s][k] >= s)
-                        // and ending at 'e' is possible (min_end[e+1][k+1] <= e)
-                        if (max_start[s][k] !== -1 && min_end[e + 1][k + 1] !== n + 1) {
-                             // Check basic validity against lineView (somewhat redundant with DP, but safer)
-                             let placement_valid = true;
-                             for(let p=s; p<=e; p++) if(lineView[p] === -1) { placement_valid = false; break; }
-                             if (!placement_valid) continue;
-                             if(s > 0 && lineView[s-1] === 1) placement_valid = false;
-                             if(e < n-1 && lineView[e+1] === 1) placement_valid = false;
-
-                             if (placement_valid) {
-                                 s_max_k = Math.max(s_max_k, s);
-                                 // We also need e_min_k, can find it here too
-                                 e_min_k = Math.min(e_min_k, e);
-                             }
-                        }
-                    }
-
-                    // If a valid range [s_max_k, e_min_k] exists for block k
-                    if (s_max_k !== -1 && e_min_k !== n && s_max_k <= e_min_k) {
-                        // Calculate the intersection interval that *must* be filled by block k
-                        // Intersection starts at max(s_max_k, e_min_k - len + 1)
-                        // Intersection ends at min(e_min_k, s_max_k + len - 1)
-                        const intersect_start = e_min_k - len + 1;
-                        const intersect_end = s_max_k + len - 1;
-
-                        // Does cell 'i' fall within this mandatory filled interval?
-                        // Check i against the intersection of [s_max_k, e_min_k] and [intersect_start, intersect_end]
-                        const actual_intersect_start = Math.max(intersect_start, s_max_k);
-                        const actual_intersect_end = Math.min(intersect_end, e_min_k);
-                        if (i >= actual_intersect_start && i <= actual_intersect_end) {
-                           is_forced_filled = true;
-                        }
-                    }
-
-                    // 2. Check if cell 'i' CAN be covered by block 'k' (for Forced Empty check)
-                    if (!can_be_covered) { // Only check if not already known to be coverable
-                        // Iterate all possible start positions 's' for block k such that it covers 'i'
-                        for (let s = Math.max(0, i - len + 1); s <= i && s <= n - len; s++) {
-                            const e = s + len - 1; // Corresponding end position
-
-                            // Check if starting at 's' and ending at 'e' is possible via DP
-                            if (max_start[s][k] !== -1 && min_end[e + 1][k + 1] !== n + 1) {
-                                // Check basic validity against current lineView constraints
-                                let placement_valid = true;
-                                for (let p = s; p <= e; p++) {
-                                    if (lineView[p] === -1) { placement_valid = false; break; }
-                                }
-                                if (!placement_valid) continue;
-                                if (s > 0 && lineView[s - 1] === 1) placement_valid = false;
-                                if (e < n - 1 && lineView[e + 1] === 1) placement_valid = false;
-
-                                if (placement_valid) {
-                                    can_be_covered = true;
-                                    break; // Found a way to cover cell i with block k
-                                }
-                            }
-                        } // End loop possible starts (s)
-                    } // End if(!can_be_covered)
-
-                    // Optimization: if forced filled, no need to check other clues for filling this cell
-                    if (is_forced_filled) {
-                         break; // Break from clue loop (k)
-                    }
-
-                } // End loop clues (k)
-
-                // --- Apply Deductions for cell i ---
-                if (is_forced_filled) {
-                    if (currentCellStateInView === -1) return null; // Contradiction: Forced filled, but cell is empty
-                    if (resultLine[i] === 0) { // Only change if undecided
-                        resultLine[i] = 1;
-                        changed = true;
-                    }
-                } else if (!can_be_covered) { // If no block can possibly cover this cell
-                    if (currentCellStateInView === 1) return null; // Contradiction: Forced empty, but cell is filled
-                    if (resultLine[i] === 0) { // Only change if undecided
-                        resultLine[i] = -1;
-                        changed = true;
-                    }
-                }
-            } // End loop cells (i)
-
-            // Return the modified line only if changes were made
-            return changed ? resultLine : lineView;
-        }
-
-
-        /**
-         * Validates a line using DP.
-         * @param {Int8Array} lineView
-         * @param {number[]} clues
-         * @param {number} lineLength
-         * @returns {boolean} True if the line is potentially valid.
-         */
-        _validateLineDP(lineView, clues, lineLength) {
-             // Handle "0" clue case
-             if (clues.length === 1 && clues[0] === 0) {
-                 for (let i = 0; i < lineLength; i++) {
-                     if (lineView[i] === 1) return false; // Contradiction
-                 }
-                 return true;
-             }
-              // Handle case where parseClues might return []
-             if (clues.length === 0) {
-                 return this._validateLineDP(lineView, [0], lineLength);
-             }
-             // Run the DP calculation and check if a valid end state is reachable
-             const ranges = this._calcLeftRanges(lineView, clues, lineLength);
-             return ranges !== null; // If DP calculation succeeds, the line is potentially valid
-        }
-
-
-        /** Applies logical deductions repeatedly. */
         logic() {
           if (!this._initialized) return false;
           let changed = true;
           let anyChanges = false;
           let iterations = 0;
-          // Heuristic limit: More iterations might be needed for complex DP deductions
           const maxIterations = (this._width + this._height) * 3;
 
           while (changed && iterations < maxIterations) {
             changed = false;
             iterations++;
 
-            // Process rows
-            for (let r = 0; r < this._height; r++) {
-              // Get a view (subarray) of the current row state
+            // Rows
+            for (let r = 0; r < this._height; ++r) {
               const rowOffset = r * this._width;
-              const rowView = this._gridState.subarray(rowOffset, rowOffset + this._width);
-              // Create a copy to pass to deduceLineDP, as it might modify it internally
-              const rowViewCopy = new Int8Array(rowView);
-
-              const deducedRow = this._deduceLineDP(
-                rowViewCopy, // Pass the copy
-                this._rowClues[r],
-                this._width
+              const rowView = this._gridState.subarray(
+                rowOffset,
+                rowOffset + this._width
               );
-
-              if (deducedRow === null) {
+              const deduced = deduceLineBrute(rowView, this._rowClues[r]);
+              if (!deduced) {
                 this.log(`Inconsistency found in row ${r + 1}`);
-                return false; // Indicate inconsistency
+                return false;
               }
-
-              // Apply changes back to the main gridState if the result differs
-              // Compare deducedRow with the original rowView
-              for(let c=0; c<this._width; c++) {
-                  if (rowView[c] !== deducedRow[c]) { // Check against original view
-                      // Check for contradiction before setting
-                      if ((rowView[c] === 1 && deducedRow[c] === -1) || (rowView[c] === -1 && deducedRow[c] === 1)) {
-                          this.log(`Contradiction applying deduction in row ${r+1}, col ${c+1}`);
-                          return false;
-                      }
-                      if (rowView[c] === 0) { // Only apply if original was undecided
-                         this._setCell(r, c, deducedRow[c]);
-                         changed = true;
-                         anyChanges = true;
-                      }
+              for (let c = 0; c < this._width; ++c) {
+                if (rowView[c] !== deduced[c]) {
+                  if (
+                    (rowView[c] === 1 && deduced[c] === -1) ||
+                    (rowView[c] === -1 && deduced[c] === 1)
+                  ) {
+                    this.log(
+                      `Contradiction in row ${r + 1}, col ${c + 1}`
+                    );
+                    return false;
                   }
+                  if (rowView[c] === 0) {
+                    this._setCell(r, c, deduced[c]);
+                    changed = true;
+                    anyChanges = true;
+                  }
+                }
               }
             }
 
-            // Process columns
-            const colView = new Int8Array(this._height); // Temporary array for column data
-            for (let c = 0; c < this._width; c++) {
-              // Extract column data into colView
-              for (let r = 0; r < this._height; r++) {
+            // Columns
+            const colView = new Int8Array(this._height);
+            for (let c = 0; c < this._width; ++c) {
+              for (let r = 0; r < this._height; ++r)
                 colView[r] = this._getCell(r, c);
-              }
-              // Create a copy to pass to deduceLineDP
-              const colViewCopy = new Int8Array(colView);
-
-              const deducedCol = this._deduceLineDP(
-                colViewCopy, // Pass the copy
-                this._colClues[c],
-                this._height
-              );
-
-              if (deducedCol === null) {
+              const deduced = deduceLineBrute(colView, this._colClues[c]);
+              if (!deduced) {
                 this.log(`Inconsistency found in column ${c + 1}`);
-                return false; // Indicate inconsistency
+                return false;
               }
-
-              // Apply changes back to the main gridState if the result differs
-              // Compare deducedCol with the original colView
-              for(let r=0; r<this._height; r++) {
-                  if (colView[r] !== deducedCol[r]) { // Check against original view
-                       // Check for contradiction before setting
-                      if ((colView[r] === 1 && deducedCol[r] === -1) || (colView[r] === -1 && deducedCol[r] === 1)) {
-                          this.log(`Contradiction applying deduction in col ${c+1}, row ${r+1}`);
-                          return false;
-                      }
-                      if (colView[r] === 0) { // Only apply if original was undecided
-                         this._setCell(r, c, deducedCol[r]);
-                         changed = true;
-                         anyChanges = true;
-                      }
+              for (let r = 0; r < this._height; ++r) {
+                if (colView[r] !== deduced[r]) {
+                  if (
+                    (colView[r] === 1 && deduced[r] === -1) ||
+                    (colView[r] === -1 && deduced[r] === 1)
+                  ) {
+                    this.log(
+                      `Contradiction in col ${c + 1}, row ${r + 1}`
+                    );
+                    return false;
                   }
+                  if (colView[r] === 0) {
+                    this._setCell(r, c, deduced[r]);
+                    changed = true;
+                    anyChanges = true;
+                  }
+                }
               }
-            } // End column loop
-
-             if (!changed && iterations > 1) break; // Exit early if no changes in a full pass
-
-          } // End while loop
-
+            }
+            if (!changed && iterations > 1) break;
+          }
           if (iterations === maxIterations) {
-              this.log("Warning: Logic loop reached max iterations.");
+            this.log("Warning: Logic loop reached max iterations.");
           }
-
-          // Final validation after logic loop finishes
           if (!this.validate()) {
-              this.log("Puzzle state is inconsistent after logic phase.");
-              return false;
+            this.log("Puzzle state is inconsistent after logic phase.");
+            return false;
           }
-
-          return anyChanges; // Return true if any changes were made overall
+          return anyChanges;
         }
 
-        /** Validates the entire grid state. */
+        /**
+         * Validates the entire grid state.
+         * @returns {boolean}
+         */
         validate() {
           if (!this._initialized) return false;
-          // Validate rows
           for (let r = 0; r < this._height; r++) {
             const rowView = this._gridState.subarray(
               r * this._width,
               (r + 1) * this._width
             );
-            // Pass a copy to avoid potential modification issues if validateLineDP changes
-            if (!this._validateLineDP(new Int8Array(rowView), this._rowClues[r], this._width)) {
-              // Don't log here, let the caller decide based on context
-              // this.log(`Validation failed: Row ${r + 1} is inconsistent.`);
+            if (
+              enumerateLineFillings(rowView, this._rowClues[r]).length === 0
+            ) {
               return false;
             }
           }
-          // Validate columns
           const colView = new Int8Array(this._height);
           for (let c = 0; c < this._width; c++) {
             for (let r = 0; r < this._height; r++) {
               colView[r] = this._getCell(r, c);
             }
-             // Pass a copy
-            if (!this._validateLineDP(new Int8Array(colView), this._colClues[c], this._height)) {
-              // this.log(`Validation failed: Column ${c + 1} is inconsistent.`);
+            if (
+              enumerateLineFillings(colView, this._colClues[c]).length === 0
+            ) {
               return false;
             }
           }
           return true;
         }
 
-        _countUndecided(lineView) {
-            let count = 0;
-            for(let i=0; i<lineView.length; i++) {
-                if (lineView[i] === 0) count++;
-            }
-            return count;
-        }
-
-        /** Finds the 'best' undecided cell using a heuristic (fewest undecided in row/col). */
+        /**
+         * Finds the 'best' undecided cell using a heuristic (fewest undecided in row/col).
+         * @returns {[number, number]|null}
+         */
         _findBestUndecidedCell() {
           let bestCell = null;
           let minScore = Infinity;
@@ -771,25 +589,22 @@
           const rowUndecidedCounts = Array(this._height).fill(0);
           let foundUndecided = false;
 
-          // Precompute undecided counts
-          for (let r = 0; r < this._height; r++) {
-              for (let c = 0; c < this._width; c++) {
-                  if (this._getCell(r, c) === 0) {
-                      rowUndecidedCounts[r]++;
-                      colUndecidedCounts[c]++;
-                      foundUndecided = true;
-                  }
-              }
-          }
-
-          if (!foundUndecided) return null; // No undecided cells found
-
-          // Find cell with minimum combined undecided count
           for (let r = 0; r < this._height; r++) {
             for (let c = 0; c < this._width; c++) {
               if (this._getCell(r, c) === 0) {
-                // Use counts directly, add small factor to break ties consistently (optional)
-                const score = rowUndecidedCounts[r] + colUndecidedCounts[c]; // + (r * 0.01 + c * 0.0001);
+                rowUndecidedCounts[r]++;
+                colUndecidedCounts[c]++;
+                foundUndecided = true;
+              }
+            }
+          }
+
+          if (!foundUndecided) return null;
+
+          for (let r = 0; r < this._height; r++) {
+            for (let c = 0; c < this._width; c++) {
+              if (this._getCell(r, c) === 0) {
+                const score = rowUndecidedCounts[r] + colUndecidedCounts[c];
                 if (score < minScore) {
                   minScore = score;
                   bestCell = [r, c];
@@ -800,7 +615,10 @@
           return bestCell;
         }
 
-        /** Checks if the puzzle is fully solved (no undecided cells). */
+        /**
+         * Checks if the puzzle is fully solved (no undecided cells).
+         * @returns {boolean}
+         */
         isSolved() {
           if (!this._initialized) return false;
           for (let i = 0; i < this._gridState.length; i++) {
@@ -809,64 +627,57 @@
           return true;
         }
 
-        /** Recursive backtracking solver. */
+        /**
+         * Recursive backtracking solver.
+         * @returns {boolean}
+         */
         solve() {
           if (!this._initialized) return false;
 
-          // Apply logic deductions first
           const logicSuccess = this.logic();
-          // logic() returns false on inconsistency, true/false based on changes otherwise
-          // We must check validate() explicitly if logic didn't find inconsistency itself
           if (!logicSuccess && !this.validate()) {
-              this.log("Inconsistent state detected during initial logic phase.");
-              return false;
+            this.log("Inconsistent state detected during initial logic phase.");
+            return false;
           }
 
-          // Check if solved after logic
           if (this.isSolved()) {
-              return this.validate(); // Final check on solved state
+            return this.validate();
           }
 
-          // Find the best cell to make an assumption on
           const pos = this._findBestUndecidedCell();
           if (pos === null) {
-            // Should be solved if logic ran and isSolved() was false, but check validity
             return this.validate();
           }
 
           const [r, c] = pos;
           const originalState = this.getStateSnapshot();
 
-          // --- Try Branch 1: Assume Filled (1) ---
           this._setCell(r, c, 1);
-          // Quick validation before deep recursion
           if (this.validate()) {
-              if (this.solve()) { // Recursive call
-                  return true; // Solution found down this branch
-              }
+            if (this.solve()) {
+              return true;
+            }
           }
 
-          // --- Backtrack and Try Branch 2: Assume Empty (-1) ---
-          this.restoreStateSnapshot(originalState); // Restore before trying the other branch
+          this.restoreStateSnapshot(originalState);
           this._setCell(r, c, -1);
-           // Quick validation before deep recursion
           if (this.validate()) {
-              if (this.solve()) { // Recursive call
-                  return true; // Solution found down this branch
-              }
+            if (this.solve()) {
+              return true;
+            }
           }
 
-          // --- Backtrack Fully ---
-          // If neither branch led to a solution, restore state and return false
           this.restoreStateSnapshot(originalState);
           return false;
         }
 
-        /** Gets the grid state for display. */
+        /**
+         * Gets the grid state for display.
+         * @returns {{grid:Int8Array, width:number, height:number}|{grid:null,width:number,height:number}}
+         */
         getDisplayGrid() {
-          // Return null if not initialized to prevent errors
           if (!this._initialized) {
-              return { grid: null, width: 0, height: 0 };
+            return { grid: null, width: 0, height: 0 };
           }
           return {
             grid: this._gridState,
@@ -875,51 +686,60 @@
           };
         }
 
-        /** Assume a cell state and run logic. */
+        /**
+         * Assume a cell state and run logic.
+         * @param {number} r
+         * @param {number} c
+         * @param {boolean} isFilled
+         * @returns {boolean}
+         */
         assumeAndStep(r, c, isFilled) {
-            if (!this._initialized) {
-                this.log("Please initialize the puzzle first.");
-                return false;
-            }
-             if (r < 0 || r >= this._height || c < 0 || c >= this._width) {
-                this.log("Error: Cell coordinates out of range.");
-                return false;
-            }
-            if (this._getCell(r,c) !== 0) {
-                this.log(`Cell (${r+1}, ${c+1}) is already decided.`);
-                return false;
-            }
+          if (!this._initialized) {
+            this.log("Please initialize the puzzle first.");
+            return false;
+          }
+          if (r < 0 || r >= this._height || c < 0 || c >= this._width) {
+            this.log("Error: Cell coordinates out of range.");
+            return false;
+          }
+          if (this._getCell(r, c) !== 0) {
+            this.log(`Cell (${r + 1}, ${c + 1}) is already decided.`);
+            return false;
+          }
 
-            const value = isFilled ? 1 : -1;
-            this.log(`Assuming cell (${r+1}, ${c+1}) is ${isFilled ? "filled" : "empty"}.`);
-            this._setCell(r, c, value);
+          const value = isFilled ? 1 : -1;
+          this.log(
+            `Assuming cell (${r + 1}, ${c + 1}) is ${
+              isFilled ? "filled" : "empty"
+            }.`
+          );
+          this._setCell(r, c, value);
 
-            const logicSuccess = this.logic(); // Run logic after assumption
+          const logicSuccess = this.logic();
 
-            // Check for inconsistency after logic
-            if (!logicSuccess && !this.validate()) {
-                 this.log("Warning: Assumption led to an inconsistent state.");
-                 // Optionally revert the assumption here for a cleaner step?
-                 // this._setCell(r, c, 0); // Revert
-                 // this.logic(); // Re-run logic? Or just report.
-                 return false; // Indicate failure/inconsistency
-            } else if (this.isSolved()) {
-                 this.log("Puzzle solved!");
-            } else {
-                 this.log("Applied logic after assumption.");
-            }
-            return true; // Step was successful (though maybe not solved)
+          if (!logicSuccess && !this.validate()) {
+            this.log("Warning: Assumption led to an inconsistent state.");
+            return false;
+          } else if (this.isSolved()) {
+            this.log("Puzzle solved!");
+          } else {
+            this.log("Applied logic after assumption.");
+          }
+          return true;
         }
 
-        /** Clears the grid back to undecided state. */
+        /**
+         * Clears the grid back to undecided state.
+         * @returns {boolean}
+         */
         clear() {
-            if (this._initialized) {
-                 this._gridState.fill(0);
-                 this.log("Grid cleared.");
-                 return true;
-            }
-            this.log("Puzzle not initialized.");
-            return false;
+          if (this._initialized) {
+            this._gridState.fill(0);
+            this.log("Grid cleared.");
+            return true;
+          }
+          this.log("Puzzle not initialized.");
+          return false;
         }
       }
 
@@ -931,27 +751,39 @@
       const rowInput = document.getElementById("rowInput");
       const colInput = document.getElementById("colInput");
 
+      /**
+       * Log a message to the log output area.
+       * @param {string} message
+       */
       function log(message) {
         const messageDiv = document.createElement("div");
-        // Simple timestamp for clarity
         const time = new Date().toLocaleTimeString([], { hour12: false });
         messageDiv.textContent = `[${time}] ${message}`;
         logOutput.appendChild(messageDiv);
-        logOutput.scrollTop = logOutput.scrollHeight; // Auto-scroll
+        logOutput.scrollTop = logOutput.scrollHeight;
       }
 
+      /**
+       * Clear the log output area.
+       */
       function clearLog() {
         logOutput.innerHTML = "<div>General info will appear here.</div>";
       }
 
+      /**
+       * Display the current grid state in the UI.
+       * @param {NonogramSolver} solverInstance
+       */
       function displayState(solverInstance) {
         const { grid, width, height } = solverInstance.getDisplayGrid();
         if (!grid) {
           nonogramDisplay.textContent = "";
-          // Reset input ranges if grid is cleared/uninitialized
-          rowInput.max = 1; colInput.max = 1;
-          rowInput.min = 0; colInput.min = 0;
-          rowInput.value = 1; colInput.value = 1;
+          rowInput.max = 1;
+          colInput.max = 1;
+          rowInput.min = 0;
+          colInput.min = 0;
+          rowInput.value = 1;
+          colInput.value = 1;
           return;
         }
         let content = "";
@@ -964,10 +796,8 @@
         }
         nonogramDisplay.textContent = content;
 
-        // Update input ranges dynamically
         rowInput.max = height > 0 ? height : 1;
         colInput.max = width > 0 ? width : 1;
-        // Clamp values within new range
         if (parseInt(rowInput.value) > height) rowInput.value = height;
         if (parseInt(colInput.value) > width) colInput.value = width;
         if (parseInt(rowInput.value) < 1 && height > 0) rowInput.value = 1;
@@ -983,39 +813,40 @@
       rowCluesText.addEventListener("input", () => solver.markCluesChanged());
       colCluesText.addEventListener("input", () => solver.markCluesChanged());
 
-      document.getElementById("logicSolveBtn").addEventListener("click", () => {
-        clearLog();
-        if (!solver.isReady(rowCluesText.value, colCluesText.value)) return;
-        log("Applying logical deductions...");
-        const changed = solver.logic(); // logic now returns false on inconsistency
-        displayState(solver); // Display result regardless of changes
+      document
+        .getElementById("logicSolveBtn")
+        .addEventListener("click", () => {
+          clearLog();
+          if (!solver.isReady(rowCluesText.value, colCluesText.value)) return;
+          log("Applying logical deductions...");
+          const changed = solver.logic();
+          displayState(solver);
 
-        if (!solver.validate()) { // Check validity explicitly after logic run
-             log("Puzzle became inconsistent during logic step.");
-        } else if (solver.isSolved()) {
-          log("Puzzle solved using logic!");
-        } else if (!changed) { // If valid and no changes
-          log("No further logical deductions possible.");
-        } else { // If valid and changed
+          if (!solver.validate()) {
+            log("Puzzle became inconsistent during logic step.");
+          } else if (solver.isSolved()) {
+            log("Puzzle solved using logic!");
+          } else if (!changed) {
+            log("No further logical deductions possible.");
+          } else {
             log("Applied logical deductions.");
-        }
-      });
+          }
+        });
 
       document.getElementById("assumptionBtn").addEventListener("click", () => {
-         clearLog();
-         if (!solver.isReady(rowCluesText.value, colCluesText.value)) return;
-         const r = parseInt(rowInput.value, 10) - 1;
-         const c = parseInt(colInput.value, 10) - 1;
-         const filled = document.getElementById("filledCheckbox").checked;
-         // assumeAndStep handles logging and logic internally
-         solver.assumeAndStep(r, c, filled);
-         displayState(solver); // Show state after assumption and logic
+        clearLog();
+        if (!solver.isReady(rowCluesText.value, colCluesText.value)) return;
+        const r = parseInt(rowInput.value, 10) - 1;
+        const c = parseInt(colInput.value, 10) - 1;
+        const filled = document.getElementById("filledCheckbox").checked;
+        solver.assumeAndStep(r, c, filled);
+        displayState(solver);
       });
 
       document.getElementById("clearBtn").addEventListener("click", () => {
         clearLog();
-        if (solver.clear()) { // clear() logs success/failure
-             displayState(solver); // Update display to show cleared grid
+        if (solver.clear()) {
+          displayState(solver);
         }
       });
 
@@ -1023,39 +854,40 @@
         clearLog();
         if (!solver.isReady(rowCluesText.value, colCluesText.value)) return;
         log("Starting full solve...");
-        displayState(solver); // Show initial state before solving
+        displayState(solver);
 
-        // Use setTimeout to allow UI update before potentially long solve
         setTimeout(() => {
-            const startTime = performance.now();
-            const solved = solver.solve(); // solve() includes initial logic run
-            const endTime = performance.now();
-            const duration = ((endTime - startTime) / 1000).toFixed(2);
+          const startTime = performance.now();
+          const solved = solver.solve();
+          const endTime = performance.now();
+          const duration = ((endTime - startTime) / 1000).toFixed(2);
 
-            displayState(solver); // Show final state
+          displayState(solver);
 
-            if (solved && solver.isSolved()) {
-                 log(`Puzzle solved successfully! (Took ${duration}s)`);
-            } else if (solved && !solver.isSolved()) {
-                 log(`Solver finished, but grid not fully determined. (Took ${duration}s)`);
-                 log("Check clues or logic may need refinement.");
+          if (solved && solver.isSolved()) {
+            log(`Puzzle solved successfully! (Took ${duration}s)`);
+          } else if (solved && !solver.isSolved()) {
+            log(
+              `Solver finished, but grid not fully determined. (Took ${duration}s)`
+            );
+            log("Check clues or logic may need refinement.");
+          } else {
+            if (!solver.validate()) {
+              log(
+                `No solution found: Puzzle state is inconsistent. (Took ${duration}s)`
+              );
+            } else {
+              log(
+                `No solution found for this puzzle configuration. (Took ${duration}s)`
+              );
             }
-             else {
-                // Check if inconsistent or just no solution found
-                if (!solver.validate()) {
-                     log(`No solution found: Puzzle state is inconsistent. (Took ${duration}s)`);
-                } else {
-                     log(`No solution found for this puzzle configuration. (Took ${duration}s)`);
-                }
-            }
-        }, 10); // Small delay for UI responsiveness
+          }
+        }, 10);
       });
 
-       // Initial setup
-       clearLog();
-       // Display empty state initially
-       displayState(solver);
-
+      // Initial setup
+      clearLog();
+      displayState(solver);
     </script>
   </body>
 </html>
