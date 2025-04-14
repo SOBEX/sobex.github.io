@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>YouTube Flexbox Embedder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #181818;
+      color: #eee;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    .controls {
+      display: flex;
+      gap: 1rem;
+      padding: 1rem;
+      background: #232323;
+      align-items: center;
+    }
+    .embeds {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      padding: 1rem;
+      flex: 1;
+      justify-content: flex-start;
+      align-items: flex-start;
+    }
+    .embed-item {
+      background: #222;
+      padding: 0.5rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px #0008;
+      position: relative;
+    }
+    .remove-btn {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: #c00;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      padding: 2px 6px;
+    }
+    button {
+      background: #444;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="controls">
+      <button id="addOneBtn">ADD 1</button>
+      <button id="addAllBtn">ADD ALL</button>
+      <button id="playAllBtn">PLAY ALL</button>
+      <button id="pauseAllBtn">PAUSE ALL</button>
+      <button id="stopAllBtn">STOP ALL</button>
+      <button id="removeAllBtn">REMOVE ALL</button>
+    </div>
+    <div class="embeds" id="embeds"></div>
+  </div>
+  <script>
+    const VIDEO_IDS = [
+      "StjW_iuFln4",
+      "M8HGpFcJfq8",
+      "J3rYZR8Lt5U",
+      "gdYRYbjLehg"
+    ];
+    const EMBED_WIDTH = 480;
+    const EMBED_HEIGHT = 360;
+    const players = [];
+
+    const loadYouTubeAPI = (function () {
+      let ytApiReady = false;
+      return function () {
+        return new Promise((resolve) => {
+          if (ytApiReady) return resolve();
+          const tag = document.createElement("script");
+          tag.src = "https://www.youtube.com/iframe_api";
+          window.onYouTubeIframeAPIReady = () => {
+            ytApiReady = true;
+            resolve();
+          };
+          document.body.appendChild(tag);
+        });
+      };
+    })();
+
+    const getNextId = (function () {
+      let nextId = 1;
+      return function () {
+        return "ytplayer_" + (nextId++);
+      };
+    })();
+
+    const embedsDiv = document.getElementById("embeds");
+    const addOneBtn = document.getElementById("addOneBtn");
+    const addAllBtn = document.getElementById("addAllBtn");
+    const playAllBtn = document.getElementById("playAllBtn");
+    const pauseAllBtn = document.getElementById("pauseAllBtn");
+    const stopAllBtn = document.getElementById("stopAllBtn");
+    const removeAllBtn = document.getElementById("removeAllBtn");
+
+    async function addVideo(videoId) {
+      await loadYouTubeAPI();
+      const playerId = getNextId();
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "embed-item";
+      wrapper.innerHTML = `
+        <button class="remove-btn" title="Remove">&#10006;</button>
+        <div id="${playerId}"></div>
+      `;
+      embedsDiv.appendChild(wrapper);
+
+      wrapper.querySelector(".remove-btn").onclick = () => {
+        const idx = players.findIndex((p) => p.id === playerId);
+        if (idx !== -1) {
+          players[idx].player.destroy();
+          players.splice(idx, 1);
+        }
+        wrapper.remove();
+      };
+
+      const player = new YT.Player(playerId, {
+        width: EMBED_WIDTH,
+        height: EMBED_HEIGHT,
+        videoId: videoId,
+        playerVars: {
+          rel: 0,
+          modestbranding: 1,
+          loop: 1,
+          playlist: videoId
+        }
+      });
+
+      players.push({ id: playerId, player });
+    }
+
+    addOneBtn.onclick = async () => {
+      const videoId = VIDEO_IDS[Math.floor(Math.random() * VIDEO_IDS.length)];
+      await addVideo(videoId);
+    };
+
+    addAllBtn.onclick = async () => {
+      for (const videoId of VIDEO_IDS) {
+        await addVideo(videoId);
+      }
+    };
+
+    playAllBtn.onclick = () => {
+      players.forEach(({ player }) => player.playVideo());
+    };
+
+    pauseAllBtn.onclick = () => {
+      players.forEach(({ player }) => player.pauseVideo());
+    };
+
+    stopAllBtn.onclick = () => {
+      players.forEach(({ player }) => {
+        player.pauseVideo();
+        player.seekTo(0, true);
+      });
+    };
+
+    removeAllBtn.onclick = () => {
+      players.forEach(({ player }) => player.destroy());
+      players.length = 0;
+      embedsDiv.innerHTML = "";
+    };
+  </script>
+</body>
+</html>
