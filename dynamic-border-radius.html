@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Border Radius Comparison</title>
+    <style>
+        :root {
+            /* Define CSS variables controlled by sliders */
+            --border-radius-percent-val: 10%; /* 0-50% range */
+            --border-radius-pixel-val: 6px;   /* 0-MAX_PIXEL_RADIUS range */
+        }
+
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            background-color: #f0f0f0; /* Slightly different background */
+        }
+
+        /* Base styling for ALL divs (excluding border-radius) */
+        div {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin: 8px;
+            background-color: #ffffff;
+            /* Transition applied here affects radius changes */
+            transition: border-radius 0.15s ease-out;
+            min-height: 30px;
+            box-sizing: border-box;
+            color: #333;
+        }
+
+        /* --- Section Specific Radius Rules --- */
+
+        /* Section 1: Percentage Radius */
+        .percent-radius-section div {
+            border-radius: var(--border-radius-percent-val);
+        }
+
+        /* Section 2: Pixel Radius */
+        .pixel-radius-section div {
+            border-radius: var(--border-radius-pixel-val);
+        }
+
+        /* Section 3: Calculated Radius (Percent + Pixels) */
+        .calc-radius-section div {
+            /* Combine both variables using calc() */
+            border-radius: calc(var(--border-radius-percent-val) + var(--border-radius-pixel-val));
+        }
+
+        /* --- Flexbox & Item Styles (Common) --- */
+        .flex-container {
+            display: flex;
+            border-width: 2px; /* Keep border width consistent */
+            border-style: solid;
+            min-height: 250px;
+            align-items: stretch;
+        }
+        .percent-radius-section .flex-container { border-color: dodgerblue; }
+        .pixel-radius-section .flex-container { border-color: crimson; }
+        .calc-radius-section .flex-container { border-color: darkorchid; }
+
+
+        .flex-column {
+            display: flex;
+            flex-direction: column;
+            border-width: 2px;
+            border-style: solid;
+        }
+        .percent-radius-section .flex-column { border-color: lightskyblue; }
+        .pixel-radius-section .flex-column { border-color: lightcoral; }
+        .calc-radius-section .flex-column { border-color: violet; }
+
+
+        .item {
+            background-color: #e0e0e0; /* Neutral base color */
+            flex-grow: 1;
+            flex-basis: 0;
+        }
+        .item-1 { flex-grow: 2; } /* Wider item */
+
+        .item-nested {
+             background-color: #d0d0d0;
+             flex-grow: 1;
+             min-height: 50px;
+        }
+
+        .item-double-nested {
+             background-color: #c0c0c0;
+             min-height: 20px;
+        }
+
+        /* --- Controls Styling --- */
+        .controls {
+            /* --- Sticky Behavior --- */
+            position: sticky; /* Make the element sticky */
+            top: 8px;         /* Stick 8px from the top of the viewport */
+            z-index: 10;      /* Ensure it stays above scrolling content */
+
+            /* --- Existing Styles (adjusted slightly) --- */
+            margin-top: 15px; /* Reduced top margin */
+            margin-bottom: 25px; /* Added bottom margin for spacing when stuck */
+            padding: 12px 15px; /* Slightly adjusted padding */
+            background-color: #e9e9e9; /* Keep background to hide content behind */
+            border: 1px solid #bbb;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); /* Add subtle shadow for depth */
+        }
+        /* Exclude controls' CHILDREN from the section radius rules & reset styles */
+        .controls div, .controls label, .controls span, .controls input { /* Removed '.controls,' from the start */
+            border-radius: initial !important; /* Override section rules */
+            border: none;
+            background-color: transparent; /* Keep children transparent */
+            padding: 0;
+            margin: 0 5px 0 0; /* Reset margins/padding */
+        }
+        .controls div { margin-bottom: 10px; } /* Space between slider rows */
+        /* Remove last row bottom margin */
+        .controls div:last-child { margin-bottom: 0; }
+        .controls label { font-weight: bold; min-width: 120px; display: inline-block;}
+        .controls input[type="range"] { width: 250px; vertical-align: middle; cursor: pointer; }
+        .controls span { font-weight: bold; min-width: 45px; display: inline-block; text-align: right; vertical-align: middle; }
+
+        /* --- General Layout --- */
+        section {
+            margin-bottom: 40px;
+            padding: 10px;
+            border: 1px dashed #999;
+        }
+        h2 { margin-top: 0; }
+
+    </style>
+</head>
+<body>
+
+    <h1>Border Radius Comparison: %, px, calc(% + px)</h1>
+
+    <!-- Controls Section -->
+    <div class="controls">
+        <div>
+            <label for="percentSlider">Percentage Base:</label>
+            <input type="range" id="percentSlider" min="0" max="100" value="20">
+            <span id="percentValue">20%</span>
+            <small>(Affects % and Calc sections)</small>
+        </div>
+        <div>
+            <label for="pixelSlider">Pixel Base:</label>
+            <input type="range" id="pixelSlider" min="0" max="100" value="20">
+            <span id="pixelValue">6px</span>
+             <small>(Affects px and Calc sections)</small>
+        </div>
+    </div>
+
+    <!-- Section 1: Percentage Radius -->
+    <section class="percent-radius-section">
+        <h2>1. Percentage Radius (<code>border-radius: %</code>)</h2>
+        <p>Radius based on element dimensions. Controlled by Percentage slider.</p>
+        <!-- Structure copied here -->
+        <div class="flex-container">
+            <div class="item item-1">Outer Box 1 (Wider)</div>
+            <div class="item item-2 flex-column">
+                Outer Box 2 (Column)
+                <div class="item-nested">Nested Box 2.1</div>
+                <div class="item-nested flex-column">
+                    Nested Box 2.2 (Column)
+                    <div class="item-double-nested">Double Nested 2.2.1</div>
+                    <div class="item-double-nested">Double Nested 2.2.2</div>
+                </div>
+            </div>
+            <div class="item item-3">Outer Box 3</div>
+        </div>
+        <div>Standalone div</div>
+    </section>
+
+    <!-- Section 2: Pixel Radius -->
+    <section class="pixel-radius-section">
+        <h2>2. Pixel Radius (<code>border-radius: px</code>)</h2>
+        <p>Fixed radius, circular corners. Controlled by Pixel slider.</p>
+        <!-- Structure copied here -->
+        <div class="flex-container">
+            <div class="item item-1">Outer Box 1 (Wider)</div>
+            <div class="item item-2 flex-column">
+                Outer Box 2 (Column)
+                <div class="item-nested">Nested Box 2.1</div>
+                <div class="item-nested flex-column">
+                    Nested Box 2.2 (Column)
+                    <div class="item-double-nested">Double Nested 2.2.1</div>
+                    <div class="item-double-nested">Double Nested 2.2.2</div>
+                </div>
+            </div>
+            <div class="item item-3">Outer Box 3</div>
+        </div>
+        <div>Standalone div</div>
+    </section>
+
+    <!-- Section 3: Calculated Radius -->
+    <section class="calc-radius-section">
+        <h2>3. Calculated Radius (<code>border-radius: calc(% + px)</code>)</h2>
+        <p>Combines percentage and pixel values. Controlled by both sliders.</p>
+        <!-- Structure copied here -->
+        <div class="flex-container">
+            <div class="item item-1">Outer Box 1 (Wider)</div>
+            <div class="item item-2 flex-column">
+                Outer Box 2 (Column)
+                <div class="item-nested">Nested Box 2.1</div>
+                <div class="item-nested flex-column">
+                    Nested Box 2.2 (Column)
+                    <div class="item-double-nested">Double Nested 2.2.1</div>
+                    <div class="item-double-nested">Double Nested 2.2.2</div>
+                </div>
+            </div>
+            <div class="item item-3">Outer Box 3</div>
+        </div>
+        <div>Standalone div</div>
+    </section>
+
+
+    <script>
+        // --- Slider References ---
+        const percentSlider = document.getElementById('percentSlider');
+        const pixelSlider = document.getElementById('pixelSlider');
+
+        // --- Value Display References ---
+        const percentValueSpan = document.getElementById('percentValue');
+        const pixelValueSpan = document.getElementById('pixelValue');
+
+        // --- Root Element for CSS Variables ---
+        const root = document.documentElement;
+
+        // --- Constants ---
+        const MAX_PIXEL_RADIUS = 30; // Max pixels when pixel slider is at 100%
+
+        // --- Update Functions ---
+        function updatePercentRadius() {
+            const sliderValue = percentSlider.value; // 0-100
+            // Map slider value (0-100) to CSS percentage (0-50%)
+            const cssPercentage = sliderValue / 2;
+
+            // Update the CSS variable for percentage
+            root.style.setProperty('--border-radius-percent-val', `${cssPercentage}%`);
+
+            // Update the display span (showing 0-100%)
+            percentValueSpan.textContent = `${sliderValue}%`;
+        }
+
+        function updatePixelRadius() {
+            const sliderValue = pixelSlider.value; // 0-100
+            // Map slider value (0-100) to pixel value (0-MAX_PIXEL_RADIUS)
+            const pixelValue = (sliderValue / 100) * MAX_PIXEL_RADIUS;
+
+            // Update the CSS variable for pixels
+            root.style.setProperty('--border-radius-pixel-val', `${pixelValue}px`);
+
+            // Update the display span (showing calculated px value)
+            // Use toFixed(1) for cleaner display if MAX_PIXEL_RADIUS isn't round
+            pixelValueSpan.textContent = `${pixelValue.toFixed(1)}px`;
+        }
+
+        // --- Event Listeners ---
+        percentSlider.addEventListener('input', updatePercentRadius);
+        pixelSlider.addEventListener('input', updatePixelRadius);
+
+        // --- Initial Update on Load ---
+        updatePercentRadius();
+        updatePixelRadius();
+    </script>
+
+</body>
+</html>
